@@ -26,6 +26,7 @@ use std::time::Duration;
 
 pub use rtps::{Message, Reassembly, Submessage};
 use transport::error::{Result, protocol_error};
+use transport::hex::hex;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use transport::{Arrived, Directions, Transport};
 use udp::UdpTransport;
@@ -151,14 +152,6 @@ impl DdsTransport {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    bytes.iter().fold(String::new(), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
-}
-
 impl Transport for DdsTransport {
     fn name(&self) -> &'static str {
         "dds"
@@ -237,25 +230,17 @@ impl Loopback for DdsTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use transport::payload::{edge_payloads, patterned};
 
     /// The shapes a protocol breaks on, as the Playground lists them.
-    fn edge_payloads() -> Vec<(&'static str, Vec<u8>)> {
-        let patterned = |len: usize| -> Vec<u8> {
-            (0..len)
-                .map(|at| u8::try_from((at * 31 + at / 251) % 256).unwrap_or(0))
-                .collect()
-        };
-        vec![
-            ("empty", Vec::new()),
-            ("one byte", vec![0x2a]),
-            ("every byte", (0..=255).collect()),
-            ("nul run", vec![0; 512]),
-            ("high bytes", vec![0xff; 512]),
-            ("crlf storm", b"\r\n".repeat(400)),
+    fn payloads() -> Vec<(&'static str, Vec<u8>)> {
+        let mut payloads = edge_payloads();
+        payloads.extend([
             ("udp maximum", patterned(65_507)),
             ("sixteen bits plus one", patterned(65_537)),
             ("a mebibyte", patterned(1 << 20)),
-        ]
+        ]);
+        payloads
     }
 
     #[test]
@@ -288,7 +273,7 @@ mod tests {
     #[test]
     fn the_loopback_returns_the_edges_whole() {
         let loopback = DdsTransport::loopback();
-        for (name, bytes) in edge_payloads() {
+        for (name, bytes) in payloads() {
             let arrived = loopback
                 .round(&bytes)
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
