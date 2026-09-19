@@ -31,6 +31,11 @@ use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use transport::{Arrived, Directions, Transport};
 use udp::UdpTransport;
 
+/// How many quiet read windows a half-read sample is given before the reader
+/// says the fragments stopped. Each window is the socket's own timeout, so
+/// this is a patience, not a deadline in seconds.
+const QUIET_WINDOWS: u8 = 4;
+
 /// A writer at one locator, or a reader on one.
 #[derive(Clone)]
 pub struct DdsTransport {
@@ -116,13 +121,27 @@ impl DdsTransport {
         let datagrams = self.datagrams();
         let mut reassembly = Reassembly::default();
         let mut first = true;
+        let mut quiet = 0u8;
         loop {
             let datagram = match datagrams.receive_one(socket) {
                 Ok(datagram) => datagram,
                 Err(error) if error.retryable && first => return Ok(None),
-                Err(error) => return Err(error),
+                // A quiet moment part way through a sample is not the end of
+                // it. A large sample is many fragments, and on an operating
+                // system whose receive buffer is smaller than the burst — as
+                // Linux's is, where Windows swallowed it whole and hid this
+                // for months — the reader drains faster than the writer
+                // refills and meets a timeout with fragments still to come.
+                // Give the writer a few more windows before saying the
+                // fragments stopped (found on Linux, 2026-09-19).
+                Err(error) if error.retryable && quiet < QUIET_WINDOWS => {
+                    quiet += 1;
+                    continue;
+                }
+                Err(error) => return Err(error.at("the fragments stopped coming")),
             };
             first = false;
+            quiet = 0;
             let message = Message::decode(&datagram.bytes)?;
             for submessage in &message.submessages {
                 if let Some(serialized) = reassembly.take(submessage)? {
