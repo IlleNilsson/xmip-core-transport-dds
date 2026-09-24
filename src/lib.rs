@@ -26,6 +26,7 @@ use std::time::Duration;
 
 use codec::hex;
 pub use rtps::{Message, Reassembly, Submessage};
+use transport::bound::{Bound, Reading};
 use transport::error::{Result, protocol_error};
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use transport::{Arrived, Directions, Transport};
@@ -205,33 +206,17 @@ impl DdsTransport {
     }
 }
 
-/// A reader bound at its locator, waiting for its one sample.
-struct Reader {
-    transport: DdsTransport,
-    socket: UdpSocket,
-    locator: String,
-}
-
-impl FarEnd for Reader {
-    fn address(&self) -> &str {
-        &self.locator
-    }
-
-    fn take_one(self: Box<Self>) -> Result<Arrived> {
-        self.transport
-            .read_one(&self.socket)?
+impl Reading for DdsTransport {
+    /// A reader bound at its locator, waiting for its one sample.
+    fn take_one(self, socket: &UdpSocket) -> Result<Arrived> {
+        self.read_one(socket)?
             .ok_or_else(|| protocol_error("no sample arrived"))
     }
 }
 
 impl Loopback for DdsTransport {
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {
-        let (socket, locator) = self.bind()?;
-        Ok(Box::new(Reader {
-            transport: self.clone(),
-            socket,
-            locator,
-        }))
+        Ok(Box::new(Bound::new(self.clone(), self.bind()?)))
     }
 
     fn send_to(&self, address: &str, payload: &[u8]) -> Result<()> {
