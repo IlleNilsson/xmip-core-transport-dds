@@ -24,9 +24,9 @@ use std::net::UdpSocket;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use codec::hex;
 pub use rtps::{Message, Reassembly, Submessage};
 use transport::error::{Result, protocol_error};
-use transport::hex::hex;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use transport::{Arrived, Directions, Transport};
 use udp::UdpTransport;
@@ -161,8 +161,8 @@ impl DdsTransport {
                     let peer = datagram.origin_uri.trim_start_matches("udp://");
                     let origin = format!(
                         "dds://{peer}/{}{}?sn={sequence}",
-                        hex(&message.guid_prefix),
-                        hex(writer_id)
+                        hex::encode(&message.guid_prefix),
+                        hex::encode(writer_id)
                     );
                     return Ok(Some(Arrived::new(origin, rtps::deserialize(&serialized)?)));
                 }
