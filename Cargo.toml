@@ -22,6 +22,8 @@ transport = { package = "xmip-core-transport", git = "https://github.com/IlleNil
 # The datagram is udp's (architecture.toml: dds depends on udp); the RTPS
 # message inside it is this crate's.
 udp = { package = "xmip-core-transport-udp", git = "https://github.com/IlleNilsson/xmip-core-transport-udp", branch = "main" }
+# The estate's encoding primitives: a GUID prefix written as hex.
+codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNilsson/xmip-core-library-codec", branch = "main" }
 
 [dev-dependencies]
 # The loopback payloads the tests drive, from the capability's test
