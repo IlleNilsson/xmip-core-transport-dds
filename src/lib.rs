@@ -224,11 +224,6 @@ impl Loopback for DdsTransport {
             .timing_out_after(self.timeout)
             .send("", payload)
     }
-
-    fn unblock(&self, _address: &str) {
-        // The reader's receive has its own timeout; there is no listener to
-        // poke.
-    }
 }
 
 #[cfg(test)]
