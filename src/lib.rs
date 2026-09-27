@@ -29,13 +29,17 @@ pub use rtps::{Message, Reassembly, Submessage};
 use transport::bound::{Bound, Reading};
 use transport::error::{Result, protocol_error};
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::{Arrived, Directions, Transport};
+use transport::{Arrived, Configured, Directions, Transport};
 use udp::UdpTransport;
+use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
 
 /// How many quiet read windows a half-read sample is given before the reader
 /// says the fragments stopped. Each window is the socket's own timeout, so
 /// this is a patience, not a deadline in seconds.
 const QUIET_WINDOWS: u8 = 4;
+
+/// How long a read window lasts when a Location says nothing else.
+pub const TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A writer at one locator, or a reader on one.
 #[derive(Clone)]
@@ -63,7 +67,7 @@ impl DdsTransport {
             locator: locator.into(),
             guid_prefix,
             sequence: Arc::new(Mutex::new(1)),
-            timeout: Duration::from_secs(5),
+            timeout: TIMEOUT,
         }
     }
 
@@ -197,6 +201,40 @@ impl Transport for DdsTransport {
     }
 }
 
+impl Configured for DdsTransport {
+    /// The address is the local socket the participant binds: the locator a
+    /// Receive Location's reader is at, the one a Send Location writes from.
+    const SETTINGS: &'static Settings = &Settings {
+        technology: env!("CARGO_PKG_NAME"),
+        settings: &[
+            Setting {
+                name: "locator",
+                kind: Kind::Address,
+                presence: Presence::Required,
+                meaning: "The reader's locator a sample is written to where the target \
+                          names none, as host and port.",
+                applies: Applies::Send,
+            },
+            Setting {
+                name: "timeout",
+                kind: Kind::Duration,
+                presence: Presence::Default(Fixed::Duration(TIMEOUT)),
+                meaning: "How long a reader waits for a sample, or for its next fragment.",
+                applies: Applies::Receive,
+            },
+        ],
+    };
+
+    fn configured(address: &str, settings: &Read) -> Result<Self> {
+        // A reader writes nowhere: it has no locator to write to.
+        let transport = Self::new(address, settings.optional_text("locator").unwrap_or(""));
+        Ok(match settings.optional_duration("timeout") {
+            Some(timeout) => transport.timing_out_after(timeout),
+            None => transport,
+        })
+    }
+}
+
 impl DdsTransport {
     /// Both ends on this machine: an ephemeral local port each, the
     /// loopback timeout on the reader.
@@ -230,6 +268,30 @@ impl Loopback for DdsTransport {
 mod tests {
     use super::*;
     use transport::payload::{edge_payloads, patterned};
+    use xcore::settings::Given;
+
+    #[test]
+    fn dds_declares_its_settings_and_reads_through_them() {
+        assert_eq!(DdsTransport::SETTINGS.problems(), Vec::<String>::new());
+        let given = [(
+            "locator".to_string(),
+            Given::Text("10.0.0.7:7411".to_string()),
+        )];
+        let writer = DdsTransport::open("0.0.0.0:0", Applies::Send, &given).expect("writer");
+        assert_eq!(writer.locator, "10.0.0.7:7411");
+        assert_eq!(writer.timeout, TIMEOUT);
+        let given = [("timeout".to_string(), Given::Text("1s".to_string()))];
+        let reader = DdsTransport::open("0.0.0.0:7411", Applies::Receive, &given).expect("reader");
+        assert_eq!(reader.timeout, Duration::from_secs(1));
+        let Err(refused) = DdsTransport::open("0.0.0.0:0", Applies::Send, &[]) else {
+            panic!("locator is required on a Send Location");
+        };
+        assert!(
+            refused.message.contains("\"locator\""),
+            "{}",
+            refused.message
+        );
+    }
 
     /// The shapes a protocol breaks on, as the Playground lists them.
     fn payloads() -> Vec<(&'static str, Vec<u8>)> {
