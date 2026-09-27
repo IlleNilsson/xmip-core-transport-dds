@@ -5,6 +5,8 @@
 //! fragments of one. A sample is an octet sequence in CDR, little-endian,
 //! behind the encapsulation header.
 
+use net::MAX_BODY;
+use transport::ceiling;
 use transport::error::{Result, protocol_error};
 
 /// Version 2.3 of the wire protocol.
@@ -315,7 +317,8 @@ impl Reassembly {
     /// timestamp completes nothing.
     ///
     /// # Errors
-    /// A fragment past the sample's size.
+    /// A sample size over `net::MAX_BODY`, allocated only under it, or a
+    /// fragment past the sample's size.
     pub fn take(&mut self, submessage: &Submessage) -> Result<Option<Vec<u8>>> {
         match submessage {
             Submessage::InfoTimestamp { .. } => Ok(None),
@@ -329,9 +332,11 @@ impl Reassembly {
                 ..
             } => {
                 if self.sequence != Some(*sequence) {
+                    let sample_size = usize::try_from(*sample_size).unwrap_or(usize::MAX);
+                    ceiling::within(sample_size, MAX_BODY, "Xmip reads in one sample")?;
                     *self = Self {
                         sequence: Some(*sequence),
-                        bytes: vec![0; usize::try_from(*sample_size).unwrap_or(0)],
+                        bytes: vec![0; sample_size],
                         filled: 0,
                     };
                 }
@@ -445,5 +450,18 @@ mod tests {
             payload: vec![0; 10],
         };
         assert!(Reassembly::default().take(&stray).is_err(), "past the size");
+        let claimed = Submessage::DataFrag {
+            writer_id: WRITER_WITH_KEY,
+            sequence: 3,
+            starting: 1,
+            count: 1,
+            size: 1024,
+            sample_size: u32::MAX,
+            payload: vec![0; 10],
+        };
+        let refused = Reassembly::default()
+            .take(&claimed)
+            .expect_err("four gigabytes");
+        assert!(refused.message.contains("over the"), "{}", refused.message);
     }
 }
