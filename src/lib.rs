@@ -28,6 +28,7 @@ use codec::hex;
 pub use rtps::{Message, Reassembly, Submessage};
 use transport::bound::{Bound, Reading};
 use transport::error::{Result, protocol_error};
+use transport::kept::Kept;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use transport::{Arrived, Configured, Directions, Transport};
 use udp::UdpTransport;
@@ -49,6 +50,8 @@ pub struct DdsTransport {
     guid_prefix: [u8; 12],
     sequence: Arc<Mutex<i64>>,
     timeout: Duration,
+    /// The reader's socket the first receive binds, and every receive reads.
+    receiving: Kept<UdpSocket>,
 }
 
 impl DdsTransport {
@@ -68,6 +71,7 @@ impl DdsTransport {
             guid_prefix,
             sequence: Arc::new(Mutex::new(1)),
             timeout: TIMEOUT,
+            receiving: Kept::new(),
         }
     }
 
@@ -185,10 +189,12 @@ impl Transport for DdsTransport {
         Directions::BOTH
     }
 
-    /// No writer writing is not an error: an empty vector.
+    /// No writer writing is not an error: an empty vector. Read from the
+    /// socket the first receive bound and kept, so a sample written between
+    /// two receives waits in its buffer.
     fn receive(&self) -> Result<Vec<Arrived>> {
-        let (socket, _) = self.bind()?;
-        Ok(self.read_one(&socket)?.into_iter().collect())
+        let socket = self.receiving.bound(|| self.bind())?;
+        Ok(self.read_one(socket)?.into_iter().collect())
     }
 
     /// `target` may name the reader's locator, `dds://host:7411`, overriding
@@ -269,6 +275,17 @@ mod tests {
     use super::*;
     use transport::payload::{edge_payloads, patterned};
     use xcore::settings::Given;
+
+    #[test]
+    fn every_receive_reads_the_socket_the_first_bound() {
+        let receiver = DdsTransport::loopback();
+        receiver.receiving.bound(|| receiver.bind()).expect("bound");
+        let address = receiver.receiving.address().expect("address");
+        let writer = DdsTransport::loopback();
+        transport::kept::held_across_receives(&receiver, address, 5, move |at, payload| {
+            writer.write(at, payload)
+        });
+    }
 
     #[test]
     fn dds_declares_its_settings_and_reads_through_them() {
