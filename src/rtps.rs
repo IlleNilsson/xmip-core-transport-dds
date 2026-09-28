@@ -6,26 +6,26 @@
 //! behind the encapsulation header.
 
 use net::MAX_BODY;
-use transport::ceiling;
+use net::ceiling;
 use transport::error::{Result, protocol_error};
 
 /// Version 2.3 of the wire protocol.
 pub const VERSION: [u8; 2] = [2, 3];
 /// The vendor identifier nobody was assigned.
-pub const VENDOR_UNKNOWN: [u8; 2] = [0, 0];
+const VENDOR_UNKNOWN: [u8; 2] = [0, 0];
 /// The reader every writer may address.
-pub const ENTITYID_UNKNOWN: [u8; 4] = [0; 4];
+const ENTITYID_UNKNOWN: [u8; 4] = [0; 4];
 /// A user-defined writer with a key.
 pub const WRITER_WITH_KEY: [u8; 4] = [0x00, 0x00, 0x01, 0x02];
 /// How many bytes one fragment holds.
-pub const FRAGMENT_SIZE: u16 = 1024;
+const FRAGMENT_SIZE: u16 = 1024;
 /// How many fragments one `DATA_FRAG` submessage carries: sixty-three of
 /// them stay inside one datagram.
-pub const FRAGMENTS_PER_SUBMESSAGE: u16 = 63;
+const FRAGMENTS_PER_SUBMESSAGE: u16 = 63;
 /// The most serialized payload a `DATA` submessage carries in one datagram:
 /// udp's datagram less the message header, the timestamp and the
 /// submessage's own header.
-pub const MAX_DATA_PAYLOAD: usize = udp::MAX_DATAGRAM - 20 - 12 - 24;
+const MAX_DATA_PAYLOAD: usize = udp::MAX_DATAGRAM - 20 - 12 - 24;
 
 /// CDR, little-endian, no options.
 const CDR_LE: [u8; 4] = [0x00, 0x01, 0x00, 0x00];
