@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use codec::hex;
+use net::Target;
 pub use rtps::{Message, Reassembly, Submessage};
 use transport::bound::{Bound, Reading};
 use transport::error::{Result, protocol_error};
@@ -167,7 +168,7 @@ impl DdsTransport {
                         } => (writer_id, sequence),
                         Submessage::InfoTimestamp { .. } => continue,
                     };
-                    let peer = datagram.origin_uri.trim_start_matches("udp://");
+                    let peer = udp::peer_of(&datagram.origin_uri);
                     let origin = format!(
                         "dds://{peer}/{}{}?sn={sequence}",
                         hex::encode(&message.guid_prefix),
@@ -200,7 +201,7 @@ impl Transport for DdsTransport {
     /// `target` may name the reader's locator, `dds://host:7411`, overriding
     /// the transport's.
     fn send(&self, target: &str, bytes: &[u8]) -> Result<()> {
-        match transport::socket::target("dds", target) {
+        match Target::under(&["dds"], target).map(|named| (named.authority(), named.path())) {
             Some((locator, _)) if !locator.is_empty() => self.write(locator, bytes),
             _ => self.write(&self.locator, bytes),
         }
