@@ -17,6 +17,12 @@
 //! in-process: [`DdsTransport::receive`] is a reader on a UDP socket, and
 //! the loopback pair is a writer and that reader on this machine. The
 //! origin URI names the writer: `dds://127.0.0.1:49152/<guid>?sn=1`.
+//!
+//! **Acceptance is at-most-once here** ([`AT_MOST_ONCE`]): the writer is
+//! best-effort RTPS — no HEARTBEAT, no ACKNACK — so nothing is said back to
+//! it and it is never told how the receive cycle ended. Reliable RTPS,
+//! whose ACKNACK could carry the verdict, is not here. Each sample arrives
+//! whole, its fragments put back together first.
 
 pub mod rtps;
 
@@ -31,9 +37,14 @@ use transport::bound::{Bound, Reading};
 use transport::error::{Result, protocol_error};
 use transport::kept::Kept;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::{Arrived, Configured, Directions, Transport};
+use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
 use udp::UdpTransport;
 use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
+
+/// Why a DDS sample cannot be acknowledged after the receive cycle.
+pub const AT_MOST_ONCE: &str = "the writer here is best-effort RTPS: it sends no HEARTBEAT and \
+                                waits for no ACKNACK, so it is never told how the receive cycle \
+                                ended";
 
 /// How many quiet read windows a half-read sample is given before the reader
 /// says the fragments stopped. Each window is the socket's own timeout, so
@@ -121,8 +132,9 @@ impl DdsTransport {
         Ok(())
     }
 
-    /// Take one sample on an already-bound socket, or `None` when nothing
-    /// arrived in time.
+    /// Take one sample on an already-bound socket, whole, or `None` when
+    /// nothing arrived in time. Acceptance is at-most-once
+    /// ([`AT_MOST_ONCE`]).
     ///
     /// # Errors
     /// Where a datagram could not be read, a message does not read, or the
@@ -133,7 +145,7 @@ impl DdsTransport {
         let mut first = true;
         let mut quiet = 0u8;
         loop {
-            let datagram = match datagrams.receive_one(socket) {
+            let datagram = match datagrams.receive_one(socket).and_then(Arrived::taken) {
                 Ok(datagram) => datagram,
                 Err(error) if error.retryable && first => return Ok(None),
                 // A quiet moment part way through a sample is not the end of
@@ -174,7 +186,11 @@ impl DdsTransport {
                         hex::encode(&message.guid_prefix),
                         hex::encode(writer_id)
                     );
-                    return Ok(Some(Arrived::new(origin, rtps::deserialize(&serialized)?)));
+                    return Ok(Some(Arrived::whole(
+                        origin,
+                        rtps::deserialize(&serialized)?,
+                        Acknowledgement::at_most_once(AT_MOST_ONCE),
+                    )));
                 }
             }
         }
@@ -190,9 +206,14 @@ impl Transport for DdsTransport {
         Directions::BOTH
     }
 
+    fn arrivals(&self) -> transport::Arrivals {
+        transport::Arrivals::Unordered("each datagram is its own")
+    }
+
     /// No writer writing is not an error: an empty vector. Read from the
     /// socket the first receive bound and kept, so a sample written between
-    /// two receives waits in its buffer.
+    /// two receives waits in its buffer. Acceptance is at-most-once here:
+    /// the writer is best-effort ([`AT_MOST_ONCE`]).
     fn receive(&self) -> Result<Vec<Arrived>> {
         let socket = self.receiving.bound(|| self.bind())?;
         Ok(self.read_one(socket)?.into_iter().collect())
@@ -253,9 +274,10 @@ impl DdsTransport {
 
 impl Reading for DdsTransport {
     /// A reader bound at its locator, waiting for its one sample.
-    fn take_one(self, socket: &UdpSocket) -> Result<Arrived> {
+    fn take_one(self, socket: &UdpSocket) -> Result<Taken> {
         self.read_one(socket)?
-            .ok_or_else(|| protocol_error("no sample arrived"))
+            .ok_or_else(|| protocol_error("no sample arrived"))?
+            .taken()
     }
 }
 
@@ -372,7 +394,10 @@ mod tests {
                 .and_then(|()| writer.send(&target, b"two"))
         });
         let first = reader.read_one(&socket).expect("reading").expect("one");
+        assert!(!first.defers(), "a best-effort sample is at-most-once");
+        let first = first.taken().expect("taken");
         let second = reader.read_one(&socket).expect("reading").expect("two");
+        let second = second.taken().expect("taken");
         writing.join().expect("thread").expect("writing");
         assert_eq!(first.bytes, b"one");
         assert_eq!(second.bytes, b"two");
