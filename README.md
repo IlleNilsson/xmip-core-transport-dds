@@ -6,6 +6,14 @@ A Receive Location keeps its socket, bound on the first receive (`transport::kep
 
 The peer a datagram came from is read by `udp::peer_of`, where UDP writes the origin; until 2026-09-28 this technology cut it out of UDP's origin itself.
 
+## Acknowledgement
+
+Acceptance is at-most-once here. The writer is best-effort RTPS: it sends no
+HEARTBEAT and waits for no ACKNACK, so nothing is said back to it and it is
+never told how the receive cycle ended; a crash before the Stream is durable
+loses the sample. Reliable RTPS, whose ACKNACK could carry the verdict, is not
+here. Each sample arrives whole, its fragments put back together first.
+
 ## Toolchain
 
 `rust-toolchain.toml` pins the toolchain for the whole estate. Do not change it
