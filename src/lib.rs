@@ -33,10 +33,12 @@ use std::time::Duration;
 use codec::hex;
 use net::Target;
 pub use rtps::{Message, Reassembly, Submessage};
+use transport::ArrivalIdentity;
 use transport::bound::{Bound, Reading};
 use transport::error::{Result, protocol_error};
 use transport::kept::Kept;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
+use transport::socket;
 use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
 use udp::UdpTransport;
 use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
@@ -46,13 +48,14 @@ pub const AT_MOST_ONCE: &str = "the writer here is best-effort RTPS: it sends no
                                 waits for no ACKNACK, so it is never told how the receive cycle \
                                 ended";
 
-/// How many quiet read windows a half-read sample is given before the reader
-/// says the fragments stopped. Each window is the socket's own timeout, so
-/// this is a patience, not a deadline in seconds.
-const QUIET_WINDOWS: u8 = 4;
-
 /// How long a read window lasts when a Location says nothing else.
 pub const TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How many bytes of datagrams a reader's socket holds when a Location says
+/// nothing else: a mebibyte sample's fragments four times over. Best-effort
+/// RTPS repairs nothing, so a fragment the socket could not hold loses the
+/// sample.
+pub const BUFFER: u32 = 4 << 20;
 
 /// A writer at one locator, or a reader on one.
 #[derive(Clone)]
@@ -62,6 +65,7 @@ pub struct DdsTransport {
     guid_prefix: [u8; 12],
     sequence: Arc<Mutex<i64>>,
     timeout: Duration,
+    buffer: usize,
     /// The reader's socket the first receive binds, and every receive reads.
     receiving: Kept<UdpSocket>,
 }
@@ -83,6 +87,7 @@ impl DdsTransport {
             guid_prefix,
             sequence: Arc::new(Mutex::new(1)),
             timeout: TIMEOUT,
+            buffer: BUFFER as usize,
             receiving: Kept::new(),
         }
     }
@@ -94,16 +99,26 @@ impl DdsTransport {
         self
     }
 
+    /// Hold `bytes` of datagrams in the reader's socket.
+    #[must_use]
+    pub const fn holding(mut self, bytes: usize) -> Self {
+        self.buffer = bytes;
+        self
+    }
+
     fn datagrams(&self) -> UdpTransport {
         UdpTransport::new(self.bind.clone()).timing_out_after(self.timeout)
     }
 
-    /// Bind the reader's socket and report the locator actually assigned.
+    /// Bind the reader's socket, holding the bytes a sample's fragments
+    /// take, and report the locator actually assigned.
     ///
     /// # Errors
     /// Where the address is taken, malformed, or not permitted.
     pub fn bind(&self) -> Result<(UdpSocket, String)> {
-        self.datagrams().bind()
+        let (socket, locator) = self.datagrams().bind()?;
+        socket::hold(&socket, self.buffer)?;
+        Ok((socket, locator))
     }
 
     fn next_sequence(&self) -> i64 {
@@ -143,27 +158,16 @@ impl DdsTransport {
         let datagrams = self.datagrams();
         let mut reassembly = Reassembly::default();
         let mut first = true;
-        let mut quiet = 0u8;
         loop {
+            // A window gone quiet part way through a sample is a fragment
+            // lost, never one late: the writer sends them back to back and
+            // repairs nothing, and the socket holds them all (`bind`).
             let datagram = match datagrams.receive_one(socket).and_then(Arrived::taken) {
                 Ok(datagram) => datagram,
                 Err(error) if error.retryable && first => return Ok(None),
-                // A quiet moment part way through a sample is not the end of
-                // it. A large sample is many fragments, and on an operating
-                // system whose receive buffer is smaller than the burst — as
-                // Linux's is, where Windows swallowed it whole and hid this
-                // for months — the reader drains faster than the writer
-                // refills and meets a timeout with fragments still to come.
-                // Give the writer a few more windows before saying the
-                // fragments stopped (found on Linux, 2026-09-19).
-                Err(error) if error.retryable && quiet < QUIET_WINDOWS => {
-                    quiet += 1;
-                    continue;
-                }
                 Err(error) => return Err(error.at("the fragments stopped coming")),
             };
             first = false;
-            quiet = 0;
             let message = Message::decode(&datagram.bytes)?;
             for submessage in &message.submessages {
                 if let Some(serialized) = reassembly.take(submessage)? {
@@ -186,11 +190,14 @@ impl DdsTransport {
                         hex::encode(&message.guid_prefix),
                         hex::encode(writer_id)
                     );
-                    return Ok(Some(Arrived::whole(
-                        origin,
-                        rtps::deserialize(&serialized)?,
-                        Acknowledgement::at_most_once(AT_MOST_ONCE),
-                    )));
+                    return Ok(Some(
+                        Arrived::whole(
+                            origin,
+                            rtps::deserialize(&serialized)?,
+                            Acknowledgement::at_most_once(AT_MOST_ONCE),
+                        )
+                        .observing_all(datagram.observed.clone()),
+                    ));
                 }
             }
         }
@@ -250,12 +257,28 @@ impl Configured for DdsTransport {
                 meaning: "How long a reader waits for a sample, or for its next fragment.",
                 applies: Applies::Receive,
             },
+            Setting {
+                name: "buffer",
+                kind: Kind::Integer {
+                    minimum: 65_536,
+                    maximum: 1 << 30,
+                },
+                presence: Presence::Default(Fixed::Integer(BUFFER as i64)),
+                meaning: "How many bytes of datagrams a reader's socket holds: a sample's                           fragments arrive back to back, and one the socket cannot hold                           loses the sample.",
+                applies: Applies::Receive,
+            },
         ],
     };
 
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         // A reader writes nowhere: it has no locator to write to.
-        let transport = Self::new(address, settings.optional_text("locator").unwrap_or(""));
+        let transport = Self::new(address, settings.optional_text("locator").unwrap_or(""))
+            .holding(
+                settings
+                    .optional_integer("buffer")
+                    .and_then(|bytes| usize::try_from(bytes).ok())
+                    .unwrap_or(BUFFER as usize),
+            );
         Ok(match settings.optional_duration("timeout") {
             Some(timeout) => transport.timing_out_after(timeout),
             None => transport,
@@ -282,6 +305,10 @@ impl Reading for DdsTransport {
 }
 
 impl Loopback for DdsTransport {
+    fn arrival_identity(&self) -> ArrivalIdentity {
+        ArrivalIdentity::PEER
+    }
+
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {
         Ok(Box::new(Bound::new(self.clone(), self.bind()?)))
     }
@@ -323,6 +350,7 @@ mod tests {
         let given = [("timeout".to_string(), Given::Text("1s".to_string()))];
         let reader = DdsTransport::open("0.0.0.0:7411", Applies::Receive, &given).expect("reader");
         assert_eq!(reader.timeout, Duration::from_secs(1));
+        assert_eq!(reader.buffer, BUFFER as usize);
         let Err(refused) = DdsTransport::open("0.0.0.0:0", Applies::Send, &[]) else {
             panic!("locator is required on a Send Location");
         };
@@ -402,6 +430,14 @@ mod tests {
         assert_eq!(first.bytes, b"one");
         assert_eq!(second.bytes, b"two");
         assert!(first.origin_uri.ends_with("?sn=1") && second.origin_uri.ends_with("?sn=2"));
+        // Nobody writing is proved by a read that does not wait: the socket
+        // a receive keeps, non-blocking, says at once that nothing is there.
+        reader
+            .receiving
+            .bound(|| reader.bind())
+            .expect("bound")
+            .set_nonblocking(true)
+            .expect("non-blocking");
         assert!(
             reader.receive().expect("nobody").is_empty(),
             "nobody is not an error"
