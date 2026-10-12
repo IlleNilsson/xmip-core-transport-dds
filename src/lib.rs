@@ -217,6 +217,10 @@ impl Transport for DdsTransport {
         transport::Arrivals::Unordered("each datagram is its own")
     }
 
+    fn waiting(&self) -> transport::Waiting {
+        transport::Waiting::Waits("a read of the socket waits for a sample until the timeout")
+    }
+
     /// No writer writing is not an error: an empty vector. Read from the
     /// socket the first receive bound and kept, so a sample written between
     /// two receives waits in its buffer. Acceptance is at-most-once here:
