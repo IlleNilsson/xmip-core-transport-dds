@@ -431,7 +431,7 @@ mod tests {
         let mut heartbeat = bytes[..20].to_vec();
         heartbeat.extend_from_slice(&[0x07, 0x01, 4, 0, 0, 0, 0, 0]);
         let read = Message::decode(&heartbeat).expect("skipped");
-        assert!(read.submessages.is_empty());
+        assert_eq!(read.submessages, [] as [Submessage; 0]);
         assert!(
             deserialize(&[0, 1, 0, 0, 9, 0, 0, 0, 1]).is_err(),
             "length past"
