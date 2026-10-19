@@ -225,14 +225,19 @@ impl Transport for DdsTransport {
     /// socket the first receive bound and kept, so a sample written between
     /// two receives waits in its buffer. Acceptance is at-most-once here:
     /// the writer is best-effort ([`AT_MOST_ONCE`]).
-    fn receive(&self) -> Result<Vec<Arrived>> {
+    fn receive_up_to(&self, _most: usize) -> Result<Vec<Arrived>> {
         let socket = self.receiving.bound(|| self.bind())?;
         Ok(self.read_one(socket)?.into_iter().collect())
     }
 
+    fn sending(&self) -> transport::Sending {
+        transport::Sending::Gathered("one RTPS DATA submessage carries the whole sample")
+    }
+
     /// `target` may name the reader's locator, `dds://host:7411`, overriding
     /// the transport's.
-    fn send(&self, target: &str, bytes: &[u8]) -> Result<()> {
+    fn send_from(&self, target: &str, outgoing: transport::Outgoing<'_>) -> Result<()> {
+        let bytes: &[u8] = &outgoing.gather()?;
         match Target::under(&["dds"], target).map(|named| (named.authority(), named.path())) {
             Some((locator, _)) if !locator.is_empty() => self.write(locator, bytes),
             _ => self.write(&self.locator, bytes),
