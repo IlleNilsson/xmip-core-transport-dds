@@ -238,7 +238,7 @@ impl Transport for DdsTransport {
     /// the transport's.
     fn send_from(&self, target: &str, outgoing: transport::Outgoing<'_>) -> Result<()> {
         let bytes: &[u8] = &outgoing.gather()?;
-        match Target::under(&["dds"], target).map(|named| (named.authority(), named.path())) {
+        match Target::under(Self::SCHEMES, target).map(|named| (named.authority(), named.path())) {
             Some((locator, _)) if !locator.is_empty() => self.write(locator, bytes),
             _ => self.write(&self.locator, bytes),
         }
@@ -278,6 +278,9 @@ impl Configured for DdsTransport {
             },
         ],
     };
+
+    /// The schemes a Location's address is entered with to choose this technology.
+    const SCHEMES: &'static [&'static str] = &["dds"];
 
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         // A reader writes nowhere: it has no locator to write to.
