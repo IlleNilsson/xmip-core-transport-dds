@@ -27,8 +27,9 @@
 pub mod rtps;
 
 use std::net::UdpSocket;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use xcore::lock::Locked;
 
 use codec::hex;
 use net::Target;
@@ -122,7 +123,7 @@ impl DdsTransport {
     }
 
     fn next_sequence(&self) -> i64 {
-        let mut sequence = self.sequence.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut sequence = self.sequence.locked();
         let next = *sequence;
         *sequence += 1;
         next
