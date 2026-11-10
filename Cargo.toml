@@ -22,7 +22,7 @@ transport = { package = "xmip-core-transport", git = "https://github.com/IlleNil
 # transport::Configured (ADR-0064, amendment 2026-09-26).
 xcore = { package = "xmip-core", git = "https://github.com/IlleNilsson/xmip-core", branch = "main" }
 
-# The datagram is udp's (architecture.xmip: dds depends on udp); the RTPS
+# The datagram is udp's (architecture.toml: dds depends on udp); the RTPS
 # message inside it is this crate's.
 udp = { package = "xmip-core-transport-udp", git = "https://github.com/IlleNilsson/xmip-core-transport-udp", branch = "main" }
 # The estate's encoding primitives: a GUID prefix written as hex.
