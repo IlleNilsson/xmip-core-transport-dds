@@ -93,13 +93,6 @@ impl DdsTransport {
         }
     }
 
-    /// Give up on a sample whose fragments stop coming for `timeout`.
-    #[must_use]
-    pub const fn timing_out_after(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
-    }
-
     /// Hold `bytes` of datagrams in the reader's socket.
     #[must_use]
     pub const fn holding(mut self, bytes: usize) -> Self {
@@ -260,13 +253,11 @@ impl Configured for DdsTransport {
                           names none, as host and port.",
                 applies: Applies::Send,
             },
-            Setting {
-                name: "timeout",
-                kind: Kind::Duration,
-                presence: Presence::Default(Fixed::Duration(TIMEOUT)),
-                meaning: "How long a reader waits for a sample, or for its next fragment.",
-                applies: Applies::Receive,
-            },
+            transport::configured::timeout(
+                Applies::Receive,
+                Some(TIMEOUT),
+                "How long a reader waits for a sample, or for its next fragment.",
+            ),
             Setting {
                 name: "buffer",
                 kind: Kind::Integer {
@@ -283,19 +274,20 @@ impl Configured for DdsTransport {
     /// The schemes a Location's address is entered with to choose this technology.
     const SCHEMES: &'static [&'static str] = &["dds"];
 
+    fn timeout_kept(&mut self) -> Option<&mut dyn transport::configured::TimeoutKept> {
+        Some(&mut self.timeout)
+    }
+
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         // A reader writes nowhere: it has no locator to write to.
-        let transport = Self::new(address, settings.optional_text("locator").unwrap_or(""))
-            .holding(
+        Ok(
+            Self::new(address, settings.optional_text("locator").unwrap_or("")).holding(
                 settings
                     .optional_integer("buffer")
                     .and_then(|bytes| usize::try_from(bytes).ok())
                     .unwrap_or(BUFFER as usize),
-            );
-        Ok(match settings.optional_duration("timeout") {
-            Some(timeout) => transport.timing_out_after(timeout),
-            None => transport,
-        })
+            ),
+        )
     }
 }
 
