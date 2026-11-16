@@ -67,7 +67,7 @@ pub struct DdsTransport {
     sequence: Arc<Mutex<i64>>,
     timeout: Duration,
     buffer: usize,
-    /// The reader's socket the first receive binds, and every receive reads.
+    /// The reader's socket its open binds, and every receive reads.
     receiving: Kept<UdpSocket>,
 }
 
@@ -216,11 +216,11 @@ impl Transport for DdsTransport {
     }
 
     /// No writer writing is not an error: an empty vector. Read from the
-    /// socket the first receive bound and kept, so a sample written between
+    /// socket its open bound and kept, so a sample written between
     /// two receives waits in its buffer. Acceptance is at-most-once here:
     /// the writer is best-effort ([`AT_MOST_ONCE`]).
     fn receive_up_to(&self, _most: usize) -> Result<Vec<Arrived>> {
-        let socket = self.receiving.bound(|| self.bind())?;
+        let socket = self.receiving.listener()?;
         Ok(self.read_one(socket)?.into_iter().collect())
     }
 
@@ -288,6 +288,12 @@ impl Configured for DdsTransport {
                     .unwrap_or(BUFFER as usize),
             ),
         )
+    }
+
+    /// The socket every receive takes from, bound where a Receive Location
+    /// reads its topic's samples.
+    fn listening(&self) -> Result<Option<&str>> {
+        self.receiving.listening(|| self.bind())
     }
 }
 
