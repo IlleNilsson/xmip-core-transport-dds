@@ -13,20 +13,33 @@ path = "src/lib.rs"
 [dependencies]
 # A Technology depends on its parent Capability, never the reverse
 # (repository-model.md). Standard library otherwise: the framing is bytes
-# and the loopback is in this process.
+# and the loopback is in this process. Its declaration takes the
+# capability's `timeout` (`transport::configured::timeout`).
 transport = { package = "xmip-core-transport", git = "https://github.com/IlleNilsson/xmip-core-transport", branch = "main" }
 # The settings this technology declares (xcore::settings), read through
 # transport::Configured (ADR-0064, amendment 2026-09-26).
 xcore = { package = "xmip-core", git = "https://github.com/IlleNilsson/xmip-core", branch = "main" }
 
 # The datagram is udp's (architecture.toml: dds depends on udp); the RTPS
-# message inside it is this crate's.
-udp = { package = "xmip-core-transport-udp", git = "https://github.com/IlleNilsson/xmip-core-transport-udp", branch = "main" }
+# message inside it is this crate's. The code's alone: the declaration
+# takes no setting from it.
+udp = { package = "xmip-core-transport-udp", git = "https://github.com/IlleNilsson/xmip-core-transport-udp", branch = "main", optional = true }
 # The estate's encoding primitives: a GUID prefix written as hex.
-codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNilsson/xmip-core-library-codec", branch = "main" }
+codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNilsson/xmip-core-library-codec", branch = "main", optional = true }
 # The most a connection is read for: the ceiling a fragmented sample's
 # announced size is held to before it is allocated.
-net = { package = "xmip-core-library-net", git = "https://github.com/IlleNilsson/xmip-core-library-net", branch = "main" }
+net = { package = "xmip-core-library-net", git = "https://github.com/IlleNilsson/xmip-core-library-net", branch = "main", optional = true }
+
+[features]
+# The technology: its code, everything it is built on, and its declaration.
+# Without it the crate is its declaration alone (ADR-0064, amendments
+# 2026-10-22 and 2026-11-26).
+default = ["declaration", "dep:udp", "dep:codec", "dep:net"]
+# The declaration alone: what a Location of this technology is configured
+# with, `declaration::SETTINGS` and `SCHEMES`, with the read window and the
+# socket's hold its defaults name, and none of the code — what the
+# surfaces' library is to carry (open problem 48).
+declaration = []
 
 [dev-dependencies]
 # The loopback payloads the tests drive, from the capability's test

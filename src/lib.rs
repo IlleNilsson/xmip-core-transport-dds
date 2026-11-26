@@ -23,42 +23,59 @@
 //! it and it is never told how the receive cycle ended. Reliable RTPS,
 //! whose ACKNACK could carry the verdict, is not here. Each sample arrives
 //! whole, its fragments put back together first.
+//!
+//! **Built with its `declaration` feature alone** the crate is
+//! [`declaration`], what a Location of it is configured with, the read
+//! window and the socket's hold it takes unless told otherwise among it,
+//! and none of the code above, which is behind the default feature, udp's
+//! datagram with it: what the surfaces' library carries (ADR-0064,
+//! amendment 2026-11-26).
 
+#[cfg(feature = "declaration")]
+pub mod declaration;
+#[cfg(feature = "default")]
 pub mod rtps;
 
+#[cfg(feature = "default")]
 use std::net::UdpSocket;
+#[cfg(feature = "default")]
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "default")]
 use std::time::Duration;
+#[cfg(feature = "default")]
 use xcore::lock::Locked;
 
+#[cfg(feature = "default")]
 use codec::hex;
+#[cfg(feature = "default")]
+use declaration::{BUFFER, TIMEOUT};
+#[cfg(feature = "default")]
 use net::Target;
+#[cfg(feature = "default")]
 pub use rtps::{Message, Reassembly, Submessage};
-use transport::ArrivalIdentity;
+#[cfg(feature = "default")]
 use transport::bound::{Bound, Reading};
+#[cfg(feature = "default")]
 use transport::error::{Result, protocol_error};
-use transport::kept::Kept;
+#[cfg(feature = "default")]
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::socket;
+#[cfg(feature = "default")]
 use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
+#[cfg(feature = "default")]
+use transport::{ArrivalIdentity, kept::Kept, socket};
+#[cfg(feature = "default")]
 use udp::UdpTransport;
-use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
+#[cfg(feature = "default")]
+use xcore::settings::{Read, Settings};
 
 /// Why a DDS sample cannot be acknowledged after the receive cycle.
+#[cfg(feature = "default")]
 pub const AT_MOST_ONCE: &str = "the writer here is best-effort RTPS: it sends no HEARTBEAT and \
                                 waits for no ACKNACK, so it is never told how the receive cycle \
                                 ended";
 
-/// How long a read window lasts when a Location says nothing else.
-pub const TIMEOUT: Duration = Duration::from_secs(5);
-
-/// How many bytes of datagrams a reader's socket holds when a Location says
-/// nothing else: a mebibyte sample's fragments four times over. Best-effort
-/// RTPS repairs nothing, so a fragment the socket could not hold loses the
-/// sample.
-pub const BUFFER: u32 = 4 << 20;
-
 /// A writer at one locator, or a reader on one.
+#[cfg(feature = "default")]
 #[derive(Clone)]
 pub struct DdsTransport {
     bind: String,
@@ -71,6 +88,7 @@ pub struct DdsTransport {
     receiving: Kept<UdpSocket>,
 }
 
+#[cfg(feature = "default")]
 impl DdsTransport {
     /// Bound at `bind`, writing to the reader at `locator`, with a GUID
     /// prefix drawn from the process and the bind address.
@@ -198,6 +216,7 @@ impl DdsTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Transport for DdsTransport {
     fn name(&self) -> &'static str {
         "dds"
@@ -239,40 +258,10 @@ impl Transport for DdsTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Configured for DdsTransport {
-    /// The address is the local socket the participant binds: the locator a
-    /// Receive Location's reader is at, the one a Send Location writes from.
-    const SETTINGS: &'static Settings = &Settings {
-        technology: env!("CARGO_PKG_NAME"),
-        settings: &[
-            Setting {
-                name: "locator",
-                kind: Kind::Address,
-                presence: Presence::Required,
-                meaning: "The reader's locator a sample is written to where the target \
-                          names none, as host and port.",
-                applies: Applies::Send,
-            },
-            transport::configured::timeout(
-                Applies::Receive,
-                Some(TIMEOUT),
-                "How long a reader waits for a sample, or for its next fragment.",
-            ),
-            Setting {
-                name: "buffer",
-                kind: Kind::Integer {
-                    minimum: 65_536,
-                    maximum: 1 << 30,
-                },
-                presence: Presence::Default(Fixed::Integer(BUFFER as i64)),
-                meaning: "How many bytes of datagrams a reader's socket holds: a sample's                           fragments arrive back to back, and one the socket cannot hold                           loses the sample.",
-                applies: Applies::Receive,
-            },
-        ],
-    };
-
-    /// The schemes a Location's address is entered with to choose this technology.
-    const SCHEMES: &'static [&'static str] = &["dds"];
+    const SETTINGS: &'static Settings = declaration::SETTINGS;
+    const SCHEMES: &'static [&'static str] = declaration::SCHEMES;
 
     fn timeout_kept(&mut self) -> Option<&mut dyn transport::configured::TimeoutKept> {
         Some(&mut self.timeout)
@@ -297,6 +286,7 @@ impl Configured for DdsTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl DdsTransport {
     /// Both ends on this machine: an ephemeral local port each, the
     /// loopback timeout on the reader.
@@ -306,6 +296,7 @@ impl DdsTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Reading for DdsTransport {
     /// A reader bound at its locator, waiting for its one sample.
     fn take_one(self, socket: &UdpSocket) -> Result<Taken> {
@@ -315,6 +306,7 @@ impl Reading for DdsTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Loopback for DdsTransport {
     fn arrival_identity(&self) -> ArrivalIdentity {
         ArrivalIdentity::PEER
@@ -335,7 +327,7 @@ impl Loopback for DdsTransport {
 mod tests {
     use super::*;
     use transport::payload::{edge_payloads, patterned};
-    use xcore::settings::Given;
+    use xcore::settings::{Applies, Given};
 
     #[test]
     fn every_receive_reads_the_socket_the_first_bound() {
