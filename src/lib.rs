@@ -25,11 +25,9 @@
 //! whole, its fragments put back together first.
 //!
 //! **Built with its `declaration` feature alone** the crate is
-//! [`declaration`], what a Location of it is configured with, the read
-//! window and the socket's hold it takes unless told otherwise among it,
-//! and none of the code above, which is behind the default feature, udp's
-//! datagram with it: what the surfaces' library carries (ADR-0064,
-//! amendment 2026-11-26).
+//! [`declaration`], the read window and the socket's hold it takes unless
+//! told otherwise among it. The code is behind the default feature, udp's
+//! datagram with it.
 
 #[cfg(feature = "declaration")]
 pub mod declaration;
